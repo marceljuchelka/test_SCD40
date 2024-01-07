@@ -59,6 +59,9 @@ int scd4_command_send(uint16_t command) {
 	return 0;
 }
 
+/*
+ * interni funkce pro nacitani dat s delayem (duration) mezi adresou a nacteni dat
+ */
 int scd4_read_i2c_data(uint8_t *data, uint8_t lenght, uint32_t duration_us){
  	esp_err_t ret;
 	i2c_cmd_handle_t cmd;
@@ -66,15 +69,17 @@ int scd4_read_i2c_data(uint8_t *data, uint8_t lenght, uint32_t duration_us){
 	cmd = i2c_cmd_link_create();
 	i2c_master_start(cmd);
 	i2c_master_write_byte(cmd, (SCD4X_I2C_ADDRESS << 1) | I2C_MASTER_READ, I2C_MASTER_ACK);
-//	i2c_master_stop(cmd);
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 100);
 	i2c_cmd_link_delete(cmd);
-	ets_delay_us(duration_us);
+
+	ets_delay_us(duration_us);						//delay mezi adresou a nactenim dat
+
 	cmd = i2c_cmd_link_create();
 	i2c_master_read(cmd, (uint8_t*)data, lenght, I2C_MASTER_LAST_NACK);
 	i2c_master_stop(cmd);
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 100);
 	i2c_cmd_link_delete(cmd);
+
 	if(ret != ESP_OK) return ret;
 	return 0;
 }
@@ -88,13 +93,17 @@ double calculate_humidity(uint16_t raw_value) {
     return 100.0 * raw_value / (65536.0 - 1.0);
 }
 
-/* nacteni namerenych hodnot ze senzoru */
+/* nacteni namerenych hodnot ze senzoru
+ * vysledek je raw
+ * je nutno pouzit calculate_temperature nebo humidity
+ */
 int scd4_read_measure_data(SCD4_DATA_T *data){
  	esp_err_t ret;
 	ret = scd4_command_send(SCD4X_READ_MEASUREMENT);
 	if(ret != ESP_OK) return ret;
 	ret = scd4_read_i2c_data((uint8_t*)data, sizeof(*data), 1000);
 
+	/* kontrola CRC   */
 	uint16_t crc_source;
     crc_source = (data->humid);
     if(calculate_crc8((uint8_t*)&crc_source, 2) != data->humid_crc) return -3;
@@ -103,12 +112,11 @@ int scd4_read_measure_data(SCD4_DATA_T *data){
     crc_source = (data->co2);
     if(calculate_crc8((uint8_t*)&crc_source, 2) != data->co2_crc) return -1;
 
+    /* prevod na little andian   */
 	data->co2 = SWAP_UINT16(data->co2);
 	data->temp = SWAP_UINT16(data->temp);
 	data->humid = SWAP_UINT16(data->humid);
 //	printf("RAW *** co2 = %X \t co2_crc =%X \t temp = %X \t temp_crc = %X \t humidy = %X \t humid_crc = %X \n\n", data->co2,data->co2_crc, data->temp,data->temp_crc, data->humid, data->humid_crc);
-
-
 	return ESP_OK;
 }
 
@@ -131,7 +139,7 @@ int scd4_get_command_data (uint16_t command, SCD4_RESPONSE_T *data, uint8_t leng
 
 
 
-/* poslani commandu a dat  */
+/* poslani commandu a dat s delayem  */
 int scd4_send_command_data(uint16_t command, SCD4_RESPONSE_T *data, uint8_t length, uint32_t duration){
 	esp_err_t ret;
 
@@ -145,9 +153,9 @@ int scd4_send_command_data(uint16_t command, SCD4_RESPONSE_T *data, uint8_t leng
 	i2c_master_write_byte(cmd, command & 0xFF, I2C_MASTER_ACK); // LSB
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 100);
 	i2c_cmd_link_delete(cmd);
-	if (ret != ESP_OK)
-		return ret;
-	ets_delay_us(duration);
+	if (ret != ESP_OK) return ret;	// pokud je chyba i2c tak navrat s chybou
+
+	ets_delay_us(duration);		//delay mezi adresou a poslanim dat
 
 	cmd = i2c_cmd_link_create();
 	i2c_master_write_byte(cmd, (uint8_t)(data->command_response >> 8) ,I2C_MASTER_ACK); // MSB
@@ -156,9 +164,8 @@ int scd4_send_command_data(uint16_t command, SCD4_RESPONSE_T *data, uint8_t leng
 	i2c_master_stop(cmd);
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 100);
 	i2c_cmd_link_delete(cmd);
-	if (ret != ESP_OK)
-		return ret;
-	return 0;
+	if (ret != ESP_OK) return ret;	// pokud je chyba i2c tak navrat s chybou
+	return ESP_OK;
 }
 
 
